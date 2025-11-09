@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TM Webcam + Backend Performance Demo</title>
+    <title>Teachable Machine - Webcam + Backend Switch Demo</title>
     <style>
         body {
             font-family: Arial;
@@ -20,6 +20,19 @@
             margin-top: 10px;
             font-size: 18px;
             font-weight: bold;
+        }
+
+        button.backend-btn {
+            margin: 5px;
+            padding: 8px 16px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        #status {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #0078ff;
         }
 
         table {
@@ -39,22 +52,19 @@
             background: #0078ff;
             color: white;
         }
-
-        #status {
-            margin-top: 10px;
-            font-weight: bold;
-            color: #0078ff;
-        }
     </style>
 </head>
 
 <body>
+    <h2>AI in the web Demo</h2>
 
-    <h2>Teachable Machine - Webcam + Backend Performance Demo</h2>
-    <p>Live webcam predictions + CPU/WebGL/WebGPU speed comparison</p>
+    <div>
+        <button class="backend-btn" onclick="switchBackend('cpu')">CPU</button>
+        <button class="backend-btn" onclick="switchBackend('webgl')">WebGL</button>
+        <button class="backend-btn" onclick="switchBackend('webgpu')">WebGPU</button>
+    </div>
 
-    <button onclick="init()">Start Webcam & Model</button>
-    <p id="status"></p>
+    <p id="status">Click a backend to start</p>
 
     <table>
         <thead>
@@ -72,6 +82,7 @@
     <div id="label-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu"></script>
     <script
         src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
 
@@ -82,76 +93,88 @@
         const backends = ["cpu", "webgl", "webgpu"];
 
         let model, webcam, maxPredictions;
+        const backendResults = {};
 
-        async function init() {
-            // Initialize webcam first
-            webcam = new tmImage.Webcam(200, 200, true);
-            await webcam.setup();
-            await webcam.play();
-            document.getElementById("webcam-container").appendChild(webcam.canvas);
+        // Initialize webcam
+        async function initWebcam() {
+            if (!webcam) {
+                webcam = new tmImage.Webcam(200, 200, true);
+                await webcam.setup();
+                await webcam.play();
+                document.getElementById("webcam-container").appendChild(webcam.canvas);
 
-            // Initialize label container
-            const labelContainer = document.getElementById("label-container");
-            labelContainer.innerHTML = "";
-            for (let i = 0; i < 2; i++) labelContainer.appendChild(document.createElement("div")); // two classes
-
-            // Load and benchmark backends
-            resultsTable.innerHTML = "";
-            for (let backend of backends) {
-                await runBackendTest(backend);
+                const labelContainer = document.getElementById("label-container");
+                labelContainer.innerHTML = "";
+                for (let i = 0; i < 2; i++) labelContainer.appendChild(document.createElement("div"));
             }
-
-            // Start continuous prediction using default backend (current TF backend)
-            requestAnimationFrame(loop);
         }
 
-        async function runBackendTest(backend) {
-            const row = document.createElement("tr");
-            const backendCell = document.createElement("td");
-            const loadCell = document.createElement("td");
-            const inferenceCell = document.createElement("td");
-            const statusCell = document.createElement("td");
+        async function switchBackend(backend) {
+            statusEl.innerText = `Switching to ${backend.toUpperCase()}...`;
 
-            backendCell.textContent = backend.toUpperCase();
-            loadCell.textContent = "-";
-            inferenceCell.textContent = "-";
-            statusCell.textContent = "Running...";
-
-            row.appendChild(backendCell);
-            row.appendChild(loadCell);
-            row.appendChild(inferenceCell);
-            row.appendChild(statusCell);
-            resultsTable.appendChild(row);
+            await initWebcam();
 
             try {
+                const startLoad = performance.now();
                 await tf.setBackend(backend);
                 await tf.ready();
-
-                const startLoad = performance.now();
                 model = await tmImage.load(URL + "model.json", URL + "metadata.json");
                 maxPredictions = model.getTotalClasses();
                 const endLoad = performance.now();
-                loadCell.textContent = ((endLoad - startLoad) / 1000).toFixed(2);
+                const loadTime = ((endLoad - startLoad) / 1000).toFixed(2);
 
-                // Do one inference
+                // Single inference to measure time
                 const startInference = performance.now();
                 await model.predict(webcam.canvas);
                 const endInference = performance.now();
-                inferenceCell.textContent = (endInference - startInference).toFixed(1);
-                statusCell.textContent = backend.toUpperCase() + " ✓";
-                statusEl.innerText = `✅ ${backend.toUpperCase()} completed`;
+                const inferenceTime = (endInference - startInference).toFixed(1);
+
+                // Store results
+                backendResults[backend] = { loadTime, inferenceTime };
+
+                updateTable();
+
+                statusEl.innerText = `✅ ${backend.toUpperCase()} ready`;
             } catch (err) {
-                loadCell.textContent = "-";
-                inferenceCell.textContent = "-";
-                statusCell.textContent = "❌ Not Supported";
-                console.warn(`${backend} not supported:`, err);
+                console.error(`${backend} not supported:`, err);
+                statusEl.innerText = `❌ ${backend.toUpperCase()} not supported`;
             }
         }
 
-        // Continuous loop for webcam predictions
+
+        function updateTable() {
+            resultsTable.innerHTML = "";
+            for (let backend of backends) {
+                const row = document.createElement("tr");
+                const backendCell = document.createElement("td");
+                const loadCell = document.createElement("td");
+                const inferenceCell = document.createElement("td");
+                const statusCell = document.createElement("td");
+
+                backendCell.textContent = backend.toUpperCase();
+
+                if (backendResults[backend]) {
+                    loadCell.textContent = backendResults[backend].loadTime;
+                    inferenceCell.textContent = backendResults[backend].inferenceTime;
+                    statusCell.textContent = "✓";
+                } else {
+                    loadCell.textContent = "-";
+                    inferenceCell.textContent = "-";
+                    statusCell.textContent = "-";
+                }
+
+                row.appendChild(backendCell);
+                row.appendChild(loadCell);
+                row.appendChild(inferenceCell);
+                row.appendChild(statusCell);
+                resultsTable.appendChild(row);
+            }
+        }
+
+        // Continuous prediction loop
         async function loop() {
-            webcam.update();
-            if (model) {
+            if (webcam && model) {
+                webcam.update();
                 const prediction = await model.predict(webcam.canvas);
                 const labelContainer = document.getElementById("label-container");
                 labelContainer.innerHTML = "";
@@ -163,8 +186,9 @@
             }
             requestAnimationFrame(loop);
         }
-    </script>
 
+        loop();
+    </script>
 </body>
 
 </html>
