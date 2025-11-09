@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TM Webcam + Backend Performance Demo</title>
+    <style>
+        body {
+            font-family: Arial;
+            text-align: center;
+            margin: 20px;
+        }
+
+        #webcam-container {
+            margin-top: 20px;
+        }
+
+        #label-container {
+            margin-top: 10px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        table {
+            margin: 20px auto;
+            border-collapse: collapse;
+            width: 80%;
+            max-width: 600px;
+        }
+
+        th,
+        td {
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+
+        th {
+            background: #0078ff;
+            color: white;
+        }
+
+        #status {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #0078ff;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h2>Teachable Machine - Webcam + Backend Performance Demo</h2>
+    <p>Live webcam predictions + CPU/WebGL/WebGPU speed comparison</p>
+
+    <button onclick="init()">Start Webcam & Model</button>
+    <p id="status"></p>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Backend</th>
+                <th>Load Time (s)</th>
+                <th>Inference Time (ms)</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody id="results"></tbody>
+    </table>
+
+    <div id="webcam-container"></div>
+    <div id="label-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+    <script>
+        const URL = "./";
+        const resultsTable = document.getElementById("results");
+        const statusEl = document.getElementById("status");
+        const backends = ["cpu", "webgl", "webgpu"];
+
+        let model, webcam, maxPredictions;
+
+        async function init() {
+            // Initialize webcam first
+            webcam = new tmImage.Webcam(200, 200, true);
+            await webcam.setup();
+            await webcam.play();
+            document.getElementById("webcam-container").appendChild(webcam.canvas);
+
+            // Initialize label container
+            const labelContainer = document.getElementById("label-container");
+            labelContainer.innerHTML = "";
+            for (let i = 0; i < 2; i++) labelContainer.appendChild(document.createElement("div")); // two classes
+
+            // Load and benchmark backends
+            resultsTable.innerHTML = "";
+            for (let backend of backends) {
+                await runBackendTest(backend);
+            }
+
+            // Start continuous prediction using default backend (current TF backend)
+            requestAnimationFrame(loop);
+        }
+
+        async function runBackendTest(backend) {
+            const row = document.createElement("tr");
+            const backendCell = document.createElement("td");
+            const loadCell = document.createElement("td");
+            const inferenceCell = document.createElement("td");
+            const statusCell = document.createElement("td");
+
+            backendCell.textContent = backend.toUpperCase();
+            loadCell.textContent = "-";
+            inferenceCell.textContent = "-";
+            statusCell.textContent = "Running...";
+
+            row.appendChild(backendCell);
+            row.appendChild(loadCell);
+            row.appendChild(inferenceCell);
+            row.appendChild(statusCell);
+            resultsTable.appendChild(row);
+
+            try {
+                await tf.setBackend(backend);
+                await tf.ready();
+
+                const startLoad = performance.now();
+                model = await tmImage.load(URL + "model.json", URL + "metadata.json");
+                maxPredictions = model.getTotalClasses();
+                const endLoad = performance.now();
+                loadCell.textContent = ((endLoad - startLoad) / 1000).toFixed(2);
+
+                // Do one inference
+                const startInference = performance.now();
+                await model.predict(webcam.canvas);
+                const endInference = performance.now();
+                inferenceCell.textContent = (endInference - startInference).toFixed(1);
+                statusCell.textContent = backend.toUpperCase() + " ✓";
+                statusEl.innerText = `✅ ${backend.toUpperCase()} completed`;
+            } catch (err) {
+                loadCell.textContent = "-";
+                inferenceCell.textContent = "-";
+                statusCell.textContent = "❌ Not Supported";
+                console.warn(`${backend} not supported:`, err);
+            }
+        }
+
+        // Continuous loop for webcam predictions
+        async function loop() {
+            webcam.update();
+            if (model) {
+                const prediction = await model.predict(webcam.canvas);
+                const labelContainer = document.getElementById("label-container");
+                labelContainer.innerHTML = "";
+                for (let i = 0; i < maxPredictions; i++) {
+                    const p = document.createElement("div");
+                    p.textContent = `${prediction[i].className}: ${(prediction[i].probability * 100).toFixed(1)}%`;
+                    labelContainer.appendChild(p);
+                }
+            }
+            requestAnimationFrame(loop);
+        }
+    </script>
+
+</body>
+
+</html>
